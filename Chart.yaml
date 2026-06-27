@@ -1,4 +1,4 @@
-gpiVersion: v2
+apiVersion: v2
 name: registry
 description: A Helm chart for Docker Distribution (registry:v2)
 type: application
