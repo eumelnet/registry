@@ -1,0 +1,70 @@
+{{- if .Values.buildah.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "registry.fullname" . }}-buildah
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: buildah
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "registry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: buildah
+  serviceName: {{ include "registry.fullname" . }}-buildah
+  template:
+    metadata:
+      labels:
+        {{- include "registry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: buildah
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "registry.serviceAccountName" . }}
+      containers:
+        - name: buildah
+          image: "{{ .Values.buildah.image.repository }}:{{ .Values.buildah.image.tag }}"
+          imagePullPolicy: {{ .Values.buildah.image.pullPolicy }}
+          command:
+            - sleep
+            - infinity
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: sources
+              mountPath: /sources
+            - name: containers
+              mountPath: /var/lib/containers
+          resources:
+            {{- toYaml .Values.buildah.resources | nindent 12 }}
+      volumes:
+        - name: sources
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.sources.existingClaim | default (printf "%s-sources" (include "registry.fullname" .)) }}
+      {{- with .Values.buildah.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.buildah.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.buildah.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: containers
+      spec:
+        accessModes:
+          - {{ .Values.buildah.persistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.buildah.persistence.size }}
+        {{- with .Values.buildah.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+{{- end }}

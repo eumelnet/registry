@@ -1,0 +1,101 @@
+---
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: registry
+  tag: "2"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5000
+
+serviceAccount:
+  create: true
+  name: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: registry.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+persistence:
+  registry:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+  sources:
+    enabled: false
+    size: 10Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+    mountPath: /var/lib/registry/sources
+
+config:
+  http:
+    addr: :5000
+    debug:
+      addr: :5001
+      prometheus:
+        enabled: false
+        path: /metrics
+  storage:
+    filesystem:
+      rootdirectory: /var/lib/registry
+    delete:
+      enabled: true
+  maintenance:
+    readonly:
+      enabled: false
+
+resources: {}
+#  limits:
+#    cpu: 500m
+#    memory: 512Mi
+#  requests:
+#    cpu: 250m
+#    memory: 256Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+buildah:
+  enabled: false
+  image:
+    repository: quay.io/buildah/stable
+    tag: latest
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    existingClaim: ""
+  resources: {}
+#  limits:
+#    cpu: 1
+#    memory: 1Gi
+#  requests:
+#    cpu: 500m
+#    memory: 512Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+podAnnotations: {}
+podLabels: {}

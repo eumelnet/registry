@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "registry.fullname" . }}
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "registry.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "registry.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "registry.serviceAccountName" . }}
+      containers:
+        - name: registry
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.http.addr | trimPrefix ":" }}
+              protocol: TCP
+            {{- if .Values.config.http.debug }}
+            - name: debug
+              containerPort: {{ .Values.config.http.debug.addr | trimPrefix ":" }}
+              protocol: TCP
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/docker/registry
+              readOnly: true
+            - name: registry-data
+              mountPath: /var/lib/registry
+            {{- if .Values.persistence.sources.enabled }}
+            - name: sources-data
+              mountPath: {{ .Values.persistence.sources.mountPath }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: REGISTRY_CONFIGURATION_PATH
+              value: /etc/docker/registry/config.yml
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "registry.fullname" . }}-config
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.registry.existingClaim | default (printf "%s-registry" (include "registry.fullname" .)) }}
+        {{- if .Values.persistence.sources.enabled }}
+        - name: sources-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.sources.existingClaim | default (printf "%s-sources" (include "registry.fullname" .)) }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

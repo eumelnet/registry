@@ -1,0 +1,39 @@
+{{- if .Values.persistence.registry.enabled }}
+{{- if not .Values.persistence.registry.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "registry.fullname" . }}-registry
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.registry.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.registry.size }}
+  {{- with .Values.persistence.registry.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}
+---
+{{- if or .Values.persistence.sources.enabled .Values.buildah.enabled }}
+{{- if not .Values.persistence.sources.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "registry.fullname" . }}-sources
+  labels:
+    {{- include "registry.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.sources.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.sources.size }}
+  {{- with .Values.persistence.sources.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}
