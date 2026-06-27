@@ -1,15 +1,15 @@
 # registry
 
-Helm Chart fur Docker Distribution (`registry:2`) im Kubernetes Cluster.
+A Helm chart for deploying [Docker Distribution](https://hub.docker.com/_/registry) (`registry:2`) on Kubernetes.
 
 ## Features
 
-- Deployment der Docker Registry (Image: `registry:2`)
-- Optionales Ingress (default: deaktiviert)
-- PVC fur Registry-Storage (immer aktiv)
-- Optionales zweites PVC fur Image-Sources (geteilt mit Buildah)
-- Optionales Buildah-StatefulSet zum Bauen von Container-Images
-- Vollstandig uber `values.yaml` konfigurierbare Registry (wird als ConfigMap `/etc/docker/registry/config.yml` gemountet)
+- Deployment of the Docker Registry (image: `registry:2`)
+- Optional Ingress (disabled by default)
+- PVC for registry storage (always enabled)
+- Optional second PVC for image sources (shared with Buildah)
+- Optional Buildah StatefulSet for building container images
+- Fully configurable registry via `values.yaml` (mounted as ConfigMap at `/etc/docker/registry/config.yml`)
 
 ## Quick Start
 
@@ -17,24 +17,24 @@ Helm Chart fur Docker Distribution (`registry:2`) im Kubernetes Cluster.
 helm install my-registry .
 ```
 
-## Konfiguration
+## Configuration
 
-### Wichtige Parameter
+### Important Parameters
 
-| Parameter | Default | Beschreibung |
-|-----------|---------|--------------|
-| `image.tag` | `2` | Registry-Image-Tag |
-| `service.type` | `ClusterIP` | Service-Typ |
-| `service.port` | `5000` | Service-Port |
-| `ingress.enabled` | `false` | Ingress aktivieren |
-| `persistence.registry.size` | `10Gi` | Grosse des Registry-PVC |
-| `persistence.sources.enabled` | `false` | Zweites PVC fur Image-Sources |
-| `persistence.sources.mountPath` | `/var/lib/registry/sources` | Mount-Pfad der Sources im Registry-Container |
-| `buildah.enabled` | `false` | Buildah-StatefulSet aktivieren |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `image.tag` | `2` | Registry image tag |
+| `service.type` | `ClusterIP` | Service type |
+| `service.port` | `5000` | Service port |
+| `ingress.enabled` | `false` | Enable ingress |
+| `persistence.registry.size` | `10Gi` | Registry PVC size |
+| `persistence.sources.enabled` | `false` | Enable second PVC for image sources |
+| `persistence.sources.mountPath` | `/var/lib/registry/sources` | Mount path inside the registry container |
+| `buildah.enabled` | `false` | Enable Buildah StatefulSet |
 
 ## Persistence
 
-### Registry-PVC (immer aktiv)
+### Registry PVC (always enabled)
 
 ```yaml
 persistence:
@@ -46,9 +46,9 @@ persistence:
     existingClaim: ""
 ```
 
-### Sources-PVC (optional)
+### Sources PVC (optional)
 
-Fur Image-Sources, die sowohl von der Registry als auch von Buildah verwendet werden konnen:
+For image sources shared between the registry and Buildah:
 
 ```yaml
 persistence:
@@ -61,41 +61,146 @@ persistence:
     mountPath: /var/lib/registry/sources
 ```
 
-Wird `sources.enabled: true` gesetzt, mounted die Registry das Volume unter `mountPath`.
-Wird `buildah.enabled: true` gesetzt, wird das PVC automatisch angelegt (auch ohne `sources.enabled`).
+When `sources.enabled: true` is set, the registry mounts the volume at `mountPath`.
+When `buildah.enabled: true` is set, the PVC is created automatically (even without `sources.enabled`).
 
 ## Buildah
 
-Das Buildah-StatefulSet ist ein separater Container zum Bauen von OCI-Images.
-Es lauft mit `sleep infinity` und erwartet, dass man via `kubectl exec` hineingeht und buildah-Kommandos ausfuhrt.
+The Buildah StatefulSet is a separate container for building OCI images.
+It runs with `sleep infinity` and expects you to exec in and run buildah commands.
 
-### Aktivieren
+### Enabling
 
 ```yaml
 buildah:
   enabled: true
 ```
 
-### Was passiert
+### What Happens
 
-1. Sources-PVC wird unter `/sources` gemountet
-2. Ein eigener PVC (`volumeClaimTemplate`, 5Gi default) wird unter `/var/lib/containers` gemountet (Buildah-Storage)
-3. Der Container lauft mit `privileged: true` (benotigt buildah fur Overlay-FS)
-4. Images konnen aus `/sources` gebaut und via `http://<release-name>:5000` in die Registry gepusht werden
+1. The sources PVC is mounted at `/sources`
+2. A dedicated PVC (`volumeClaimTemplate`, 5Gi default) is mounted at `/var/lib/containers` (Buildah storage)
+3. The container runs with `privileged: true` (required by buildah for overlay filesystem)
+4. Images can be built from `/sources` and pushed to the registry via `http://<release-name>:5000`
 
-### Beispiel
+## Workflow: Building and Using a Custom Image
+
+This section walks through the full process of building an image with Buildah,
+pushing it to the in-cluster registry, and running a pod with that image.
+
+### Prerequisites
+
+- Helm release installed with `buildah.enabled=true` and `persistence.sources.enabled=true`
+- The Buildah pod `registry-registry-buildah-0` is running
+
+### Step 1: Create a Containerfile and Build the Image
 
 ```bash
-# Im Buildah-Container
-kubectl exec -it <pod-name> -- bash
-
-buildah bud -t my-release-registry:5000/myimage:latest /sources/myimage
-buildah push my-release-registry:5000/myimage:latest
+kubectl exec -n registry registry-registry-buildah-0 -- sh -c '
+mkdir -p /sources/my-alpine
+cat > /sources/my-alpine/Containerfile << EOF
+FROM docker.io/alpine:latest
+RUN apk add --no-cache curl ca-certificates
+CMD ["sleep", "infinity"]
+EOF
+buildah bud -t registry-registry:5000/my-alpine:latest /sources/my-alpine
+'
 ```
 
-Der Service-Name der Registry entspricht `{{ include "registry.fullname" . }}` (z.B. `my-release-registry`).
+This creates a Containerfile, places it under `/sources`, and builds the image
+tagged for the local registry.
 
-### Parameter
+### Step 2: Push the Image to the Registry
+
+Since the registry runs without TLS, pass `--tls-verify=false`:
+
+```bash
+kubectl exec -n registry registry-registry-buildah-0 -- \
+  buildah push --tls-verify=false registry-registry:5000/my-alpine:latest
+```
+
+### Step 3: Verify the Image is in the Registry
+
+```bash
+kubectl exec -n registry registry-registry-buildah-0 -- sh -c '
+curl -s http://registry-registry:5000/v2/_catalog
+'
+```
+
+Expected output: `{"repositories":["my-alpine"]}`
+
+### Step 4: Configure the Container Runtime for the Insecure Registry
+
+> **Note:** This is a one-time cluster-wide setup. The registry runs without TLS
+> (plain HTTP), so the container runtime must be configured to allow insecure
+> connections to it.
+
+#### For CRI-O
+
+Add the registry to `/etc/containers/registries.conf` on each node:
+
+```ini
+[[registry]]
+location = "registry-registry.registry.svc.cluster.local:5000"
+insecure = true
+```
+
+Then add a host entry and restart CRI-O:
+
+```bash
+echo "<cluster-ip> registry-registry.registry.svc.cluster.local" >> /etc/hosts
+systemctl restart crio
+```
+
+#### For containerd
+
+Add the registry to `/etc/containerd/config.toml` under `[plugins."io.containerd.grpc.v1.cri".registry.configs]`:
+
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry.configs]
+  [plugins."io.containerd.grpc.v1.cri".registry.configs."registry-registry.registry.svc.cluster.local:5000"]
+    [plugins."io.containerd.grpc.v1.cri".registry.configs."registry-registry.registry.svc.cluster.local:5000".tls]
+      insecure_skip_verify = true
+```
+
+### Step 5: Create a Pod Using the Image
+
+```bash
+kubectl run my-alpine-test \
+  --image=registry-registry.registry.svc.cluster.local:5000/my-alpine:latest \
+  --restart=Never \
+  -- sleep infinity
+```
+
+Verify the pod is running:
+
+```bash
+kubectl get pod my-alpine-test
+kubectl describe pod my-alpine-test | grep -i image
+```
+
+Expected output shows the image pulled from your in-cluster registry.
+
+### Step 6: Clean Up
+
+```bash
+kubectl delete pod my-alpine-test
+```
+
+### Example
+
+```bash
+# Exec into the Buildah container
+kubectl exec -n registry -it registry-registry-buildah-0 -- bash
+
+buildah bud -t my-release-registry:5000/myimage:latest /sources/myimage
+buildah push --tls-verify=false my-release-registry:5000/myimage:latest
+```
+
+The registry service name follows the pattern `{{ include "registry.fullname" . }}`
+(e.g., `my-release-registry`).
+
+### Parameters
 
 ```yaml
 buildah:
@@ -103,14 +208,15 @@ buildah:
     repository: quay.io/buildah/stable
     tag: latest
   persistence:
-    size: 5Gi       # Grosse des containers-PVC (volumeClaimTemplate)
+    size: 5Gi       # Size of the containers PVC (volumeClaimTemplate)
     storageClass: ""
     accessMode: ReadWriteOnce
 ```
 
-## Registry-Konfiguration
+## Registry Configuration
 
-Die Registry-Konfiguration wird als YAML unter `config` in der `values.yaml` definiert und als ConfigMap bereitgestellt:
+The registry configuration is defined as YAML under `config` in `values.yaml` and
+served as a ConfigMap:
 
 ```yaml
 config:
@@ -125,12 +231,13 @@ config:
       enabled: true
 ```
 
-Alle Felder werden 1:1 in die `config.yml` der Registry ubernommen.
-Siehe [Docker Registry Configuration](https://docs.docker.com/registry/configuration/) fur alle Optionen.
+All fields are passed verbatim into the registry's `config.yml`.
+See the [Docker Registry Configuration](https://docs.docker.com/registry/configuration/)
+for all available options.
 
 ## Ingress
 
-Optional, standardmassig deaktiviert:
+Optional, disabled by default:
 
 ```yaml
 ingress:
@@ -152,7 +259,7 @@ ingress:
 ## Deployment
 
 ```bash
-# Nur Registry
+# Registry only
 helm upgrade --install my-registry .
 
 # Registry + Buildah
@@ -160,7 +267,7 @@ helm upgrade --install my-registry . \
   --set persistence.sources.enabled=true \
   --set buildah.enabled=true
 
-# Mit bestehenden PVCs
+# With existing PVCs
 helm upgrade --install my-registry . \
   --set persistence.registry.existingClaim=my-registry-pvc \
   --set persistence.sources.existingClaim=my-sources-pvc \
